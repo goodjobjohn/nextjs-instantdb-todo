@@ -98,7 +98,7 @@ function TodoList({ todos }: { todos: Todo[] }) {
     return (
         <div style={styles.todoList}>
             {todos.map((todo) => (
-                <div key={todo.id} style={styles.todo}>
+                <div key={todo.id} data-id={todo.id} style={styles.todo}>
                     <input
                         type="checkbox"
                         key={todo.id}
