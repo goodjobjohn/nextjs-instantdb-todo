@@ -16,7 +16,6 @@ const db = init<Schema>({ appId: APP_ID });
 
 function App() {
     const { isLoading, error, data } = db.useQuery({ todos: {}, lists: {} });
-    const [activeListId, setActiveListId] = useState<string | null>(null);
 
     if (isLoading) {
         return <div>Fetching data...</div>;
@@ -27,42 +26,34 @@ function App() {
 
     const { todos, lists } = data;
 
-    const activeTodos = todos.filter((todo) => todo.listId === activeListId);
-    const activeList = lists.find((list) => list.id === activeListId);
-
     return (
         <div style={styles.container}>
-            <div style={styles.header}>todos</div>
             <button onClick={addList} style={styles.addListButton}>
                 Add List
             </button>
-            <div style={styles.listSelector}>
+            <div style={styles.listsContainer}>
                 {lists.map((list) => (
-                    <button
+                    <TodoListComponent
                         key={list.id}
-                        onClick={() => setActiveListId(list.id)}
-                        style={{
-                            ...styles.listButton,
-                            backgroundColor:
-                                activeListId === list.id
-                                    ? "#e6e6e6"
-                                    : "transparent",
-                        }}
-                    >
-                        {list.name}
-                    </button>
+                        list={list}
+                        todos={todos.filter((todo) => todo.listId === list.id)}
+                    />
                 ))}
             </div>
-            {activeList && (
-                <>
-                    <TodoForm todos={activeTodos} listId={activeListId} />
-                    <TodoList todos={activeTodos} />
-                    <ActionBar todos={activeTodos} />
-                </>
-            )}
             <div style={styles.footer}>
                 Open another tab to see todos update in realtime!
             </div>
+        </div>
+    );
+}
+
+function TodoListComponent({ list, todos }: { list: TodoList; todos: Todo[] }) {
+    return (
+        <div style={styles.listContainer}>
+            <h3 style={styles.listTitle}>{list.name}</h3>
+            <TodoForm todos={todos} listId={list.id} />
+            <TodoList todos={todos} />
+            <ActionBar todos={todos} />
         </div>
     );
 }
@@ -176,14 +167,12 @@ function TodoList({ todos }: { todos: Todo[] }) {
 function ActionBar({ todos }: { todos: Todo[] }) {
     return (
         <div style={styles.actionBar}>
-            <div>
-                Remaining todos: {todos.filter((todo) => !todo.done).length}
-            </div>
+            <div>Remaining: {todos.filter((todo) => !todo.done).length}</div>
             <div
                 style={{ cursor: "pointer" }}
                 onClick={() => deleteCompleted(todos)}
             >
-                Delete Completed
+                Clear Completed
             </div>
         </div>
     );
@@ -214,9 +203,9 @@ const styles: Record<string, React.CSSProperties> = {
         fontFamily: "code, monospace",
         height: "100vh",
         display: "flex",
-        justifyContent: "center",
-        alignItems: "center",
         flexDirection: "column",
+        alignItems: "center",
+        padding: "20px",
     },
     header: {
         letterSpacing: "2px",
@@ -224,84 +213,91 @@ const styles: Record<string, React.CSSProperties> = {
         color: "lightgray",
         marginBottom: "10px",
     },
+    listsContainer: {
+        display: "flex",
+        overflowX: "auto",
+        width: "100%",
+        padding: "20px 0",
+    },
+    listContainer: {
+        minWidth: "300px",
+        maxWidth: "300px",
+        marginRight: "20px",
+        backgroundColor: "white",
+        borderRadius: "5px",
+        boxShadow: "0 2px 4px rgba(0, 0, 0, 0.1)",
+        display: "flex",
+        flexDirection: "column",
+    },
+    listTitle: {
+        padding: "10px",
+        margin: "0",
+        borderBottom: "1px solid #f0f0f0",
+    },
     form: {
         boxSizing: "inherit",
         display: "flex",
-        border: "1px solid lightgray",
-        borderBottomWidth: "0px",
-        width: "350px",
+        borderBottom: "1px solid #f0f0f0",
+        padding: "10px",
     },
     toggleAll: {
-        fontSize: "30px",
+        fontSize: "20px",
         cursor: "pointer",
-        marginLeft: "11px",
-        marginTop: "-6px",
-        width: "15px",
-        marginRight: "12px",
+        marginRight: "10px",
     },
     input: {
         backgroundColor: "transparent",
-        fontFamily: "code, monospace",
-        width: "287px",
-        padding: "10px",
-        fontStyle: "italic",
+        fontFamily: "inherit",
+        flex: 1,
+        border: "none",
+        outline: "none",
+        fontSize: "14px",
     },
     todoList: {
-        boxSizing: "inherit",
-        width: "350px",
-    },
-    checkbox: {
-        fontSize: "30px",
-        marginLeft: "5px",
-        marginRight: "20px",
-        cursor: "pointer",
+        flex: 1,
+        overflowY: "auto",
     },
     todo: {
         display: "flex",
         alignItems: "center",
         padding: "10px",
-        border: "1px solid lightgray",
-        borderBottomWidth: "0px",
+        borderBottom: "1px solid #f0f0f0",
+    },
+    checkbox: {
+        marginRight: "10px",
+        cursor: "pointer",
     },
     todoText: {
-        flexGrow: "1",
+        flexGrow: 1,
         overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
     },
     delete: {
-        width: "25px",
         cursor: "pointer",
         color: "lightgray",
+        marginLeft: "10px",
     },
     actionBar: {
         display: "flex",
         justifyContent: "space-between",
-        width: "328px",
         padding: "10px",
-        border: "1px solid lightgray",
-        fontSize: "10px",
+        fontSize: "12px",
+        borderTop: "1px solid #f0f0f0",
     },
     footer: {
         marginTop: "20px",
-        fontSize: "10px",
+        fontSize: "12px",
+        color: "gray",
     },
     addListButton: {
         marginBottom: "10px",
         padding: "5px 10px",
         fontSize: "14px",
         cursor: "pointer",
-    },
-    listSelector: {
-        display: "flex",
-        flexWrap: "wrap",
-        justifyContent: "center",
-        marginBottom: "10px",
-    },
-    listButton: {
-        margin: "0 5px 5px 0",
-        padding: "5px 10px",
-        fontSize: "14px",
-        cursor: "pointer",
-        border: "1px solid lightgray",
+        backgroundColor: "#4CAF50",
+        color: "white",
+        border: "none",
         borderRadius: "3px",
     },
 };
