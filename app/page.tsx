@@ -1,7 +1,9 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import { init, tx, id } from "@instantdb/react";
+
+import "./app.css";
 
 // ID for app: Instant Tutorial Todo App
 const APP_ID = "3e6a8c32-d007-46c9-8de4-1065d6233247";
@@ -28,6 +30,7 @@ function App() {
 
     return (
         <div style={styles.container}>
+            <div style={styles.header}>freeflow</div>
             <button onClick={addList} style={styles.addListButton}>
                 Add List
             </button>
@@ -91,6 +94,10 @@ function toggleDone(todo: Todo) {
     db.transact(tx.todos[todo.id].update({ done: !todo.done }));
 }
 
+function updateTodoText(todo: Todo, newText: string) {
+    db.transact(tx.todos[todo.id].update({ text: newText }));
+}
+
 function deleteCompleted(todos: Todo[]) {
     const completed = todos.filter((todo) => todo.done);
     const txs = completed.map((todo) => tx.todos[todo.id].delete());
@@ -133,40 +140,86 @@ function TodoForm({ todos, listId }: { todos: Todo[]; listId: string }) {
 
 function TodoList({ todos }: { todos: Todo[] }) {
     return (
-        <div style={styles.todoList}>
+        <div className="list" style={styles.todoList}>
             {todos.map((todo) => (
-                <div key={todo.id} data-id={todo.id} style={styles.todo}>
-                    <input
-                        type="checkbox"
-                        key={todo.id}
-                        style={styles.checkbox}
-                        checked={todo.done}
-                        onChange={() => toggleDone(todo)}
-                    />
-                    <div style={styles.todoText}>
-                        {todo.done ? (
-                            <span style={{ textDecoration: "line-through" }}>
-                                {todo.text}
-                            </span>
-                        ) : (
-                            <span>{todo.text}</span>
-                        )}
-                    </div>
-                    <span
-                        onClick={() => deleteTodo(todo)}
-                        style={styles.delete}
-                    >
-                        𝘟
-                    </span>
-                </div>
+                <TodoItem key={todo.id} todo={todo} />
             ))}
+        </div>
+    );
+}
+
+function TodoItem({ todo }: { todo: Todo }) {
+    const [text, setText] = useState(todo.text);
+    const contentEditableRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        setText(todo.text);
+    }, [todo.text]);
+
+    const handleBlur = () => {
+        if (text.trim() === "") {
+            deleteTodo(todo);
+        } else if (text !== todo.text) {
+            updateTodoText(todo, text);
+        }
+    };
+
+    const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+        if (e.key === "Enter") {
+            e.preventDefault();
+            contentEditableRef.current?.blur();
+        }
+    };
+
+    const handleInput = (e: React.FormEvent<HTMLDivElement>) => {
+        const selection = window.getSelection();
+        const range = selection?.getRangeAt(0);
+        const position = range?.startOffset;
+
+        setText(e.currentTarget.textContent || "");
+
+        setTimeout(() => {
+            if (range) {
+                range.setStart(range.startContainer, position || 0);
+                range.setEnd(range.endContainer, position || 0);
+                selection?.removeAllRanges();
+                selection?.addRange(range);
+            }
+        }, 0);
+    };
+
+    return (
+        <div style={styles.todo}>
+            <input
+                type="checkbox"
+                style={styles.checkbox}
+                checked={todo.done}
+                onChange={() => toggleDone(todo)}
+            />
+            <div
+                ref={contentEditableRef}
+                contentEditable
+                suppressContentEditableWarning
+                style={{
+                    ...styles.todoText,
+                    textDecoration: todo.done ? "line-through" : "none",
+                }}
+                onInput={handleInput}
+                onBlur={handleBlur}
+                onKeyDown={handleKeyDown}
+            >
+                {text}
+            </div>
+            <span onClick={() => deleteTodo(todo)} style={styles.delete}>
+                𝘟
+            </span>
         </div>
     );
 }
 
 function ActionBar({ todos }: { todos: Todo[] }) {
     return (
-        <div style={styles.actionBar}>
+        <div className="actionBar" style={styles.actionBar}>
             <div>Remaining: {todos.filter((todo) => !todo.done).length}</div>
             <div
                 style={{ cursor: "pointer" }}
@@ -215,16 +268,19 @@ const styles: Record<string, React.CSSProperties> = {
     },
     listsContainer: {
         display: "flex",
+        borderRadius: "20px",
+        border: "1px solid black",
         overflowX: "auto",
         width: "100%",
         padding: "20px 0",
     },
     listContainer: {
+        borderRadius: "15px",
+        border: "1px solid black",
         minWidth: "300px",
         maxWidth: "300px",
         marginRight: "20px",
         backgroundColor: "white",
-        borderRadius: "5px",
         boxShadow: "0 2px 4px rgba(0, 0, 0, 0.1)",
         display: "flex",
         flexDirection: "column",
@@ -272,6 +328,9 @@ const styles: Record<string, React.CSSProperties> = {
         overflow: "hidden",
         textOverflow: "ellipsis",
         whiteSpace: "nowrap",
+        cursor: "text",
+        minHeight: "1em",
+        outline: "none",
     },
     delete: {
         cursor: "pointer",
@@ -279,6 +338,7 @@ const styles: Record<string, React.CSSProperties> = {
         marginLeft: "10px",
     },
     actionBar: {
+        opacity: "0",
         display: "flex",
         justifyContent: "space-between",
         padding: "10px",
