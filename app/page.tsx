@@ -2,6 +2,12 @@
 
 import React, { useState, useRef, useEffect } from "react";
 import { init, tx, id } from "@instantdb/react";
+import {
+    dropTargetForElements,
+    monitorForElements,
+} from '@atlaskit/pragmatic-drag-and-drop/element/adapter';
+import { draggable } from '@atlaskit/pragmatic-drag-and-drop/element/adapter';
+import { combine } from "@atlaskit/pragmatic-drag-and-drop/combine";
 
 import "./app.css";
 
@@ -29,12 +35,12 @@ function App() {
     const { todos, lists } = data;
 
     return (
-        <div style={styles.container}>
+        <div className="container" style={styles.container}>
             <div style={styles.header}>freeflow</div>
             <button onClick={addList} style={styles.addListButton}>
                 Add List
             </button>
-            <div style={styles.listsContainer}>
+            <div className="listsContainer" style={styles.listsContainer}>
                 {lists.map((list) => (
                     <TodoListComponent
                         key={list.id}
@@ -51,12 +57,51 @@ function App() {
 }
 
 function TodoListComponent({ list, todos }: { list: TodoList; todos: Todo[] }) {
+    const [, forceUpdate] = useState({});
+
+    const onDragStart = () => {
+        forceUpdate({});
+    };
+
+    const onDragEnd = (source: Todo, destination: Todo | TodoList) => {
+        console.log('Source:', JSON.stringify(source, null, 2));
+        console.log('Destination:', JSON.stringify(destination, null, 2));
+
+        let transactionSteps;
+        if ('name' in destination) {
+            // Dropping onto a list
+            const maxOrder = Math.max(...todos.filter(t => t.listId === destination.id).map(t => t.order || 0), 0);
+            transactionSteps = [
+                tx.todos[source.id].update({ 
+                    listId: destination.id,
+                    order: maxOrder + 1,
+                })
+            ];
+        } else {
+            // Reordering within the same list
+            const sourceIndex = todos.findIndex(t => t.id === source.id);
+            const destIndex = todos.findIndex(t => t.id === destination.id);
+            const newOrder = calculateNewOrder(todos, sourceIndex, destIndex);
+            transactionSteps = [
+                tx.todos[source.id].update({ order: newOrder })
+            ];
+        }
+        
+        console.log('Transaction steps:', JSON.stringify(transactionSteps, null, 2));
+        
+        db.transact(transactionSteps);
+    };
+
     return (
-        <div style={styles.listContainer}>
+        <div className="listContainer" style={styles.listContainer}>
             <h3 style={styles.listTitle}>{list.name}</h3>
-            <TodoForm todos={todos} listId={list.id} />
-            <TodoList todos={todos} />
-            <ActionBar todos={todos} />
+            <TodoList
+                todos={todos}
+                listId={list.id}
+                onDragStart={onDragStart}
+                onDragEnd={onDragEnd}
+            />
+            <ActionBar todos={todos} listId={list.id} />
         </div>
     );
 }
@@ -75,15 +120,25 @@ function addList() {
     }
 }
 
-function addTodo(text: string, listId: string) {
+function addTodo(listId: string, todos: Todo[]) {
+    const newTodoId = id();
+    const maxOrder = Math.max(...todos.map(t => t.order || 0), 0);
     db.transact(
-        tx.todos[id()].update({
-            text,
+        tx.todos[newTodoId].update({
+            text: "",
             done: false,
             createdAt: Date.now(),
             listId,
+            order: maxOrder + 1,
         })
     );
+    // Focus on the new todo item after a short delay
+    setTimeout(() => {
+        const newTodoElement = document.getElementById(`todo-${newTodoId}`);
+        if (newTodoElement) {
+            newTodoElement.focus();
+        }
+    }, 50);
 }
 
 function deleteTodo(todo: Todo) {
@@ -95,7 +150,10 @@ function toggleDone(todo: Todo) {
 }
 
 function updateTodoText(todo: Todo, newText: string) {
-    db.transact(tx.todos[todo.id].update({ text: newText }));
+    db.transact(tx.todos[todo.id].update({ 
+        text: newText,
+        order: todo.order || Date.now(),
+    }));
 }
 
 function deleteCompleted(todos: Todo[]) {
@@ -113,48 +171,102 @@ function toggleAll(todos: Todo[]) {
 
 // Components
 // ----------
-function TodoForm({ todos, listId }: { todos: Todo[]; listId: string }) {
-    return (
-        <div style={styles.form}>
-            <div style={styles.toggleAll} onClick={() => toggleAll(todos)}>
-                ⌄
-            </div>
-            <form
-                onSubmit={(e) => {
-                    e.preventDefault();
-                    const input = e.target[0] as HTMLInputElement;
-                    addTodo(input.value, listId);
-                    input.value = "";
-                }}
-            >
-                <input
-                    style={styles.input}
-                    autoFocus
-                    placeholder="What needs to be done?"
-                    type="text"
-                />
-            </form>
-        </div>
-    );
-}
+function TodoList({ todos, listId, onDragStart, onDragEnd }: { todos: Todo[]; listId: string; onDragStart: () => void; onDragEnd: (source: Todo, destination: Todo | TodoList) => void }) {
+    const sortedTodos = [...todos].sort((a, b) => (a.order || 0) - (b.order || 0));
+    const listRef = useRef<HTMLDivElement>(null);
 
-function TodoList({ todos }: { todos: Todo[] }) {
+    useEffect(() => {
+        if (!listRef.current) return;
+
+        const cleanup = combine(
+            dropTargetForElements({
+                element: listRef.current,
+                getData: () => ({ id: listId, name: 'List' }),
+                canDrop: (args) => {
+                    console.log('canDrop args:', args);
+                    return args.source.data && args.source.data.listId !== listId;
+                },
+                onDrag: (args) => {
+                    console.log('onDrag args:', args);
+                    if (args.source.element) {
+                        args.source.element.style.opacity = '0.5';
+                    }
+                },
+                onDragLeave: (args) => {
+                    console.log('onDragLeave args:', args);
+                    if (args.source.element) {
+                        args.source.element.style.opacity = '1';
+                    }
+                },
+                onDrop: (args) => {
+                    console.log('onDrop args:', args);
+                    if (args.source.element) {
+                        args.source.element.style.opacity = '1';
+                    }
+                    if (args.source.data) {
+                        onDragEnd(args.source.data as Todo, { id: listId, name: 'List' });
+                    } else {
+                        console.error('Drop event occurred but source data is missing');
+                    }
+                },
+            }),
+            monitorForElements({
+                onDragStart: (args) => {
+                    console.log('onDragStart args:', args);
+                    onDragStart();
+                },
+                onDrop: (args) => {
+                    console.log('monitor onDrop args:', args);
+                    onDragStart();
+                },
+            })
+        );
+
+        return cleanup;
+    }, [listId, onDragEnd, onDragStart]);
+
     return (
-        <div className="list" style={styles.todoList}>
-            {todos.map((todo) => (
-                <TodoItem key={todo.id} todo={todo} />
+        <div ref={listRef} style={styles.todoList}>
+            {sortedTodos.map((todo) => (
+                <TodoItem key={todo.id} todo={todo} listId={listId} todos={sortedTodos} onDragEnd={onDragEnd} />
             ))}
         </div>
     );
 }
 
-function TodoItem({ todo }: { todo: Todo }) {
+function TodoItem({ todo, listId, todos, onDragEnd }: { todo: Todo; listId: string; todos: Todo[]; onDragEnd: (source: Todo, destination: Todo | TodoList) => void }) {
     const [text, setText] = useState(todo.text);
     const contentEditableRef = useRef<HTMLDivElement>(null);
+    const itemRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
         setText(todo.text);
     }, [todo.text]);
+
+    useEffect(() => {
+        if (!itemRef.current) return;
+
+        const cleanup = combine(
+            draggable({
+                element: itemRef.current,
+                data: todo,
+            }),
+            dropTargetForElements({
+                element: itemRef.current,
+                getData: () => todo,
+                onDrop: (args) => {
+                    console.log('TodoItem onDrop args:', args);
+                    if (args.source.data) {
+                        onDragEnd(args.source.data as Todo, todo);
+                    } else {
+                        console.error('Drop event occurred in TodoItem but source data is missing');
+                    }
+                },
+            })
+        );
+
+        return cleanup;
+    }, [todo, onDragEnd]);
 
     const handleBlur = () => {
         if (text.trim() === "") {
@@ -167,7 +279,7 @@ function TodoItem({ todo }: { todo: Todo }) {
     const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
         if (e.key === "Enter") {
             e.preventDefault();
-            contentEditableRef.current?.blur();
+            addTodoBelow(listId, todo.id, todos);
         }
     };
 
@@ -189,7 +301,7 @@ function TodoItem({ todo }: { todo: Todo }) {
     };
 
     return (
-        <div style={styles.todo}>
+        <div ref={itemRef} className="item" style={styles.todo}>
             <input
                 type="checkbox"
                 style={styles.checkbox}
@@ -197,6 +309,7 @@ function TodoItem({ todo }: { todo: Todo }) {
                 onChange={() => toggleDone(todo)}
             />
             <div
+                id={`todo-${todo.id}`}
                 ref={contentEditableRef}
                 contentEditable
                 suppressContentEditableWarning
@@ -210,17 +323,27 @@ function TodoItem({ todo }: { todo: Todo }) {
             >
                 {text}
             </div>
-            <span onClick={() => deleteTodo(todo)} style={styles.delete}>
-                𝘟
+            <span
+                className="itemDelete"
+                onClick={() => deleteTodo(todo)}
+                style={styles.delete}
+            >
+                ⅹ
             </span>
         </div>
     );
 }
 
-function ActionBar({ todos }: { todos: Todo[] }) {
+function ActionBar({ todos, listId }: { todos: Todo[]; listId: string }) {
     return (
         <div className="actionBar" style={styles.actionBar}>
             <div>Remaining: {todos.filter((todo) => !todo.done).length}</div>
+            <button
+                onClick={() => addTodo(listId, todos)}
+                style={styles.addTodoButton}
+            >
+                +
+            </button>
             <div
                 style={{ cursor: "pointer" }}
                 onClick={() => deleteCompleted(todos)}
@@ -231,6 +354,53 @@ function ActionBar({ todos }: { todos: Todo[] }) {
     );
 }
 
+// Add this new function
+function addTodoBelow(listId: string, currentTodoId: string, todos: Todo[]) {
+    const newTodoId = id();
+    const currentIndex = todos.findIndex(t => t.id === currentTodoId);
+    const newOrder = currentIndex !== -1 && currentIndex < todos.length - 1
+        ? (todos[currentIndex].order || 0 + todos[currentIndex + 1].order || 0) / 2
+        : (todos[currentIndex].order || 0) + 1;
+
+    db.transact([
+        tx.todos[newTodoId].update({
+            text: "",
+            done: false,
+            createdAt: Date.now(),
+            listId,
+            order: newOrder,
+        }),
+        ...todos.slice(currentIndex + 1).map((t, index) => 
+            tx.todos[t.id].update({ order: newOrder + index + 1 })
+        )
+    ]);
+
+    // Focus on the new todo item after a short delay
+    setTimeout(() => {
+        const newTodoElement = document.getElementById(`todo-${newTodoId}`);
+        if (newTodoElement) {
+            newTodoElement.focus();
+        }
+    }, 50);
+}
+
+// Helper function to calculate new order
+function calculateNewOrder(todos: Todo[], sourceIndex: number, destIndex: number): number {
+    if (sourceIndex === destIndex) return todos[sourceIndex].order || 0;
+
+    if (destIndex === 0) {
+        return ((todos[0]?.order || 0) - 1);
+    }
+
+    if (destIndex === todos.length - 1) {
+        return ((todos[todos.length - 1]?.order || 0) + 1);
+    }
+
+    const prevOrder = todos[destIndex - 1]?.order || 0;
+    const nextOrder = todos[destIndex]?.order || 0;
+    return (prevOrder + nextOrder) / 2;
+}
+
 // Types
 // ----------
 type Todo = {
@@ -239,6 +409,7 @@ type Todo = {
     done: boolean;
     createdAt: number;
     listId: string;
+    order?: number;
 };
 
 type TodoList = {
@@ -252,8 +423,7 @@ type TodoList = {
 const styles: Record<string, React.CSSProperties> = {
     container: {
         boxSizing: "border-box",
-        backgroundColor: "#fafafa",
-        fontFamily: "code, monospace",
+        backgroundColor: "#fafafa",       
         height: "100vh",
         display: "flex",
         flexDirection: "column",
@@ -269,14 +439,14 @@ const styles: Record<string, React.CSSProperties> = {
     listsContainer: {
         display: "flex",
         borderRadius: "20px",
-        border: "1px solid black",
-        overflowX: "auto",
+        border: "var(--border-style)",
         width: "100%",
         padding: "20px 0",
     },
     listContainer: {
         borderRadius: "15px",
-        border: "1px solid black",
+        border: "var(--border-style)",
+        overflow: "hidden",
         minWidth: "300px",
         maxWidth: "300px",
         marginRight: "20px",
@@ -288,26 +458,7 @@ const styles: Record<string, React.CSSProperties> = {
     listTitle: {
         padding: "10px",
         margin: "0",
-        borderBottom: "1px solid #f0f0f0",
-    },
-    form: {
-        boxSizing: "inherit",
-        display: "flex",
-        borderBottom: "1px solid #f0f0f0",
-        padding: "10px",
-    },
-    toggleAll: {
-        fontSize: "20px",
-        cursor: "pointer",
-        marginRight: "10px",
-    },
-    input: {
-        backgroundColor: "transparent",
-        fontFamily: "inherit",
-        flex: 1,
-        border: "none",
-        outline: "none",
-        fontSize: "14px",
+        borderBottom: "var(--border-style)",
     },
     todoList: {
         flex: 1,
@@ -338,7 +489,6 @@ const styles: Record<string, React.CSSProperties> = {
         marginLeft: "10px",
     },
     actionBar: {
-        opacity: "0",
         display: "flex",
         justifyContent: "space-between",
         padding: "10px",
@@ -359,6 +509,20 @@ const styles: Record<string, React.CSSProperties> = {
         color: "white",
         border: "none",
         borderRadius: "3px",
+    },
+    addTodoButton: {
+        fontSize: "18px",
+        cursor: "pointer",
+        backgroundColor: "#4CAF50",
+        color: "white",
+        border: "none",
+        borderRadius: "50%",
+        width: "24px",
+        height: "24px",
+        display: "flex",
+        justifyContent: "center",
+        alignItems: "center",
+        padding: 0,
     },
 };
 

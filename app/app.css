@@ -1,0 +1,39 @@
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;1,100;1,200;1,300;1,400;1,500;1,600;1,700&display=swap');
+
+:root{
+    --border-style: 1px solid #000000;
+    font-family: 'IBM Plex Sans', sans-serif;
+}
+h1,h2,h3  {
+    font-size: 1rem;
+    font-weight: 400;
+    background-color: #F1F1F1;
+    text-align: center;
+}
+
+.listsContainer {
+    overflow-x: hidden;
+    &:hover {
+        overflow-x: auto;
+    }
+}
+.listContainer:hover {
+    .actionBar,
+    input,
+    .itemDelete {
+        opacity: 0.7;
+        transition: opacity 100ms ease;
+    }
+}
+.actionBar {
+    opacity: 0;
+    transition: opacity 100ms ease;
+}
+
+.item {
+    input,
+    .itemDelete {
+        opacity: 0;
+        transition: opacity 100ms ease;
+    }
+}
