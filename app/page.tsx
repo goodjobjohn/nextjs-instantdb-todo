@@ -67,9 +67,14 @@ function TodoListComponent({ list, todos }: { list: TodoList; todos: Todo[] }) {
         console.log('Source:', JSON.stringify(source, null, 2));
         console.log('Destination:', JSON.stringify(destination, null, 2));
 
+        if (!source || !source.id) {
+            console.error('Invalid source object:', source);
+            return;
+        }
+
         let transactionSteps;
         if ('name' in destination) {
-            // Dropping onto a list
+            // Dropping onto a different list
             const maxOrder = Math.max(...todos.filter(t => t.listId === destination.id).map(t => t.order || 0), 0);
             transactionSteps = [
                 tx.todos[source.id].update({ 
@@ -89,7 +94,11 @@ function TodoListComponent({ list, todos }: { list: TodoList; todos: Todo[] }) {
         
         console.log('Transaction steps:', JSON.stringify(transactionSteps, null, 2));
         
-        db.transact(transactionSteps);
+        if (transactionSteps && transactionSteps.length > 0) {
+            db.transact(transactionSteps);
+        } else {
+            console.error('No valid transaction steps generated');
+        }
     };
 
     return (
@@ -174,6 +183,7 @@ function toggleAll(todos: Todo[]) {
 function TodoList({ todos, listId, onDragStart, onDragEnd }: { todos: Todo[]; listId: string; onDragStart: () => void; onDragEnd: (source: Todo, destination: Todo | TodoList) => void }) {
     const sortedTodos = [...todos].sort((a, b) => (a.order || 0) - (b.order || 0));
     const listRef = useRef<HTMLDivElement>(null);
+    const [dropIndicatorIndex, setDropIndicatorIndex] = useState<number | null>(null);
 
     useEffect(() => {
         if (!listRef.current) return;
@@ -183,53 +193,91 @@ function TodoList({ todos, listId, onDragStart, onDragEnd }: { todos: Todo[]; li
                 element: listRef.current,
                 getData: () => ({ id: listId, name: 'List' }),
                 canDrop: (args) => {
-                    console.log('canDrop args:', args);
-                    return args.source.data && args.source.data.listId !== listId;
+                    console.log('canDrop args:', JSON.stringify({
+                        sourceData: args.source.data,
+                        targetId: listId
+                    }, null, 2));
+                    // Allow dropping from any list, including the same one
+                    return args.source.data && args.source.data.listId;
                 },
                 onDrag: (args) => {
-                    console.log('onDrag args:', args);
+                    console.log('onDrag args:', JSON.stringify({
+                        sourceData: args.source.data,
+                    }, null, 2));
                     if (args.source.element) {
                         args.source.element.style.opacity = '0.5';
                     }
+                    
+                    // Update drop indicator position
+                    if (listRef.current) {
+                        const listRect = listRef.current.getBoundingClientRect();
+                        const y = args.location.current.input.clientY;
+                        const index = Math.floor((y - listRect.top) / 40); // Assuming each item is 40px high
+                        setDropIndicatorIndex(Math.max(0, Math.min(index, sortedTodos.length)));
+                    }
                 },
                 onDragLeave: (args) => {
-                    console.log('onDragLeave args:', args);
+                    console.log('onDragLeave args:', JSON.stringify({
+                        sourceData: args.source.data,
+                    }, null, 2));
                     if (args.source.element) {
                         args.source.element.style.opacity = '1';
                     }
+                    setDropIndicatorIndex(null);
                 },
                 onDrop: (args) => {
-                    console.log('onDrop args:', args);
+                    console.log('onDrop args:', JSON.stringify({
+                        sourceData: args.source.data,
+                    }, null, 2));
                     if (args.source.element) {
                         args.source.element.style.opacity = '1';
                     }
                     if (args.source.data) {
-                        onDragEnd(args.source.data as Todo, { id: listId, name: 'List' });
+                        const sourceTodo = args.source.data as Todo;
+                        if (sourceTodo.listId !== listId) {
+                            // Dropping onto a different list
+                            onDragEnd(sourceTodo, { id: listId, name: 'List', createdAt: Date.now() });
+                        } else {
+                            // Reordering within the same list
+                            const destinationIndex = dropIndicatorIndex !== null ? dropIndicatorIndex : sortedTodos.length;
+                            const destinationTodo = sortedTodos[destinationIndex] || { id: 'end', listId, order: Number.MAX_SAFE_INTEGER };
+                            onDragEnd(sourceTodo, destinationTodo);
+                        }
                     } else {
                         console.error('Drop event occurred but source data is missing');
                     }
+                    setDropIndicatorIndex(null);
                 },
             }),
             monitorForElements({
                 onDragStart: (args) => {
-                    console.log('onDragStart args:', args);
+                    console.log('onDragStart args:', JSON.stringify({
+                        sourceData: args.source.data,
+                    }, null, 2));
                     onDragStart();
                 },
                 onDrop: (args) => {
-                    console.log('monitor onDrop args:', args);
+                    console.log('monitor onDrop args:', JSON.stringify({
+                        sourceData: args.source.data,
+                    }, null, 2));
                     onDragStart();
+                    setDropIndicatorIndex(null);
                 },
             })
         );
 
         return cleanup;
-    }, [listId, onDragEnd, onDragStart]);
+    }, [listId, onDragEnd, onDragStart, sortedTodos]);
 
     return (
         <div ref={listRef} style={styles.todoList}>
-            {sortedTodos.map((todo) => (
-                <TodoItem key={todo.id} todo={todo} listId={listId} todos={sortedTodos} onDragEnd={onDragEnd} />
+            {sortedTodos.map((todo, index) => (
+                <React.Fragment key={todo.id}>
+                    {dropIndicatorIndex === index && <div style={styles.dropIndicator} />}
+                    <TodoItem todo={todo} listId={listId} todos={sortedTodos} onDragEnd={onDragEnd} />
+                </React.Fragment>
             ))}
+            {dropIndicatorIndex === sortedTodos.length && <div style={styles.dropIndicator} />}
         </div>
     );
 }
@@ -249,13 +297,15 @@ function TodoItem({ todo, listId, todos, onDragEnd }: { todo: Todo; listId: stri
         const cleanup = combine(
             draggable({
                 element: itemRef.current,
-                data: todo,
+                getInitialData: () => todo,
             }),
             dropTargetForElements({
                 element: itemRef.current,
                 getData: () => todo,
                 onDrop: (args) => {
-                    console.log('TodoItem onDrop args:', args);
+                    console.log('TodoItem onDrop args:', JSON.stringify({
+                        sourceData: args.source.data,
+                    }, null, 2));
                     if (args.source.data) {
                         onDragEnd(args.source.data as Todo, todo);
                     } else {
@@ -523,6 +573,11 @@ const styles: Record<string, React.CSSProperties> = {
         justifyContent: "center",
         alignItems: "center",
         padding: 0,
+    },
+    dropIndicator: {
+        height: '2px',
+        backgroundColor: '#4CAF50',
+        transition: 'all 0.2s ease',
     },
 };
 
