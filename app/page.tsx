@@ -48,9 +48,7 @@ function App() {
                     />
                 ))}
             </div>
-            <div style={styles.footer}>
-                Open another tab to see todos update in realtime!
-            </div>
+           
         </div>
     );
 }
@@ -594,13 +592,15 @@ function updateListName(list: TodoList, newName: string) {
 // Add this new component
 function EditableTitle({ list }: { list: TodoList }) {
     const [text, setText] = useState(list.name);
-    const contentEditableRef = useRef<HTMLDivElement>(null);
+    const [isEditing, setIsEditing] = useState(false);
+    const inputRef = useRef<HTMLInputElement>(null);
 
     useEffect(() => {
         setText(list.name);
     }, [list.name]);
 
     const handleBlur = () => {
+        setIsEditing(false);
         if (text.trim() === "") {
             setText(list.name); // Reset to original name if empty
         } else if (text !== list.name) {
@@ -608,28 +608,39 @@ function EditableTitle({ list }: { list: TodoList }) {
         }
     };
 
-    const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
         if (e.key === "Enter") {
-            e.preventDefault();
-            contentEditableRef.current?.blur();
+            inputRef.current?.blur();
         }
     };
 
-    const handleInput = (e: React.FormEvent<HTMLDivElement>) => {
-        setText(e.currentTarget.textContent || "");
+    const handleDoubleClick = () => {
+        setIsEditing(true);
+        setTimeout(() => {
+            inputRef.current?.focus();
+            inputRef.current?.setSelectionRange(0, text.length);
+        }, 0);
     };
 
     return (
-        <div
-            ref={contentEditableRef}
-            contentEditable
-            suppressContentEditableWarning
-            style={styles.listTitle}
-            onInput={handleInput}
-            onBlur={handleBlur}
-            onKeyDown={handleKeyDown}
-        >
-            {text}
+        <div style={styles.listTitle} onDoubleClick={handleDoubleClick}>
+            {isEditing ? (
+                <input
+                    ref={inputRef}
+                    value={text}
+                    onChange={(e) => setText(e.target.value)}
+                    onBlur={handleBlur}
+                    onKeyDown={handleKeyDown}
+                    style={{
+                        ...styles.listTitle,
+                        border: 'none',
+                        background: 'transparent',
+                        width: '100%',
+                    }}
+                />
+            ) : (
+                <span>{text}</span>
+            )}
         </div>
     );
 }
