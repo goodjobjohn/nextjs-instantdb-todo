@@ -24,6 +24,7 @@ const db = init<Schema>({ appId: APP_ID });
 
 function App() {
     const { isLoading, error, data } = db.useQuery({ todos: {}, lists: {} });
+    const [, forceUpdate] = useState({});
 
     if (isLoading) {
         return <div>Fetching data...</div>;
@@ -34,30 +35,64 @@ function App() {
 
     const { todos, lists } = data;
 
+    const onListDragStart = () => {
+        forceUpdate({});
+    };
+
+    const onListDragEnd = (source: TodoList, destination: TodoList, destinationIndex: number) => {
+        const sortedLists = [...lists].sort((a, b) => (a.order || 0) - (b.order || 0));
+        let newOrder;
+        if (destinationIndex === 0) {
+            newOrder = (sortedLists[0]?.order || 0) - 1;
+        } else if (destinationIndex >= sortedLists.length) {
+            newOrder = (sortedLists[sortedLists.length - 1]?.order || 0) + 1;
+        } else {
+            const prevOrder = sortedLists[destinationIndex - 1].order || 0;
+            const nextOrder = sortedLists[destinationIndex].order || 0;
+            newOrder = (prevOrder + nextOrder) / 2;
+        }
+
+        db.transact(tx.lists[source.id].update({ order: newOrder }));
+    };
+
     return (
         <div className="container" style={styles.container}>
             <button onClick={addList} style={styles.addListButton}>
                 Add List
             </button>
             <div className="listsContainer" style={styles.listsContainer}>
-                {lists.map((list) => (
+                {lists.sort((a, b) => (a.order || 0) - (b.order || 0)).map((list, index) => (
                     <TodoListComponent
                         key={list.id}
                         list={list}
                         todos={todos.filter((todo) => todo.listId === list.id)}
+                        onListDragStart={onListDragStart}
+                        onListDragEnd={onListDragEnd}
+                        index={index}
                     />
                 ))}
             </div>
-           
         </div>
     );
 }
 
-function TodoListComponent({ list, todos }: { list: TodoList; todos: Todo[] }) {
-    const [, forceUpdate] = useState({});
+function TodoListComponent({ 
+    list, 
+    todos, 
+    onListDragStart, 
+    onListDragEnd, 
+    index 
+}: { 
+    list: TodoList; 
+    todos: Todo[]; 
+    onListDragStart: () => void; 
+    onListDragEnd: (source: TodoList, destination: TodoList, destinationIndex: number) => void; 
+    index: number;
+}) {
+    const listRef = useRef<HTMLDivElement>(null);
 
     const onDragStart = () => {
-        forceUpdate({});
+        onListDragStart();
     };
 
     const onDragEnd = (source: Todo, destination: Todo | TodoList, destinationIndex: number) => {
@@ -118,8 +153,50 @@ function TodoListComponent({ list, todos }: { list: TodoList; todos: Todo[] }) {
         }
     };
 
+    useEffect(() => {
+        if (!listRef.current) return;
+
+        const cleanup = combine(
+            draggable({
+                element: listRef.current,
+                getInitialData: () => list,
+            }),
+            dropTargetForElements({
+                element: listRef.current,
+                getData: () => ({ ...list, index }),
+                onDrag: () => {
+                    if (listRef.current) {
+                        listRef.current.style.opacity = '0.5';
+                    }
+                },
+                onDragLeave: () => {
+                    if (listRef.current) {
+                        listRef.current.style.opacity = '1';
+                    }
+                },
+                onDrop: (args) => {
+                    if (listRef.current) {
+                        listRef.current.style.opacity = '1';
+                    }
+                    if (args.source.data) {
+                        const sourceList = args.source.data as TodoList;
+                        onListDragEnd(sourceList, list, index);
+                    }
+                },
+            }),
+            monitorForElements({
+                onDragStart,
+                onDrop: () => {
+                    onDragStart();
+                },
+            })
+        );
+
+        return cleanup;
+    }, [list, index, onListDragStart, onListDragEnd]);
+
     return (
-        <div className="listContainer" style={styles.listContainer}>
+        <div ref={listRef} className="listContainer" style={styles.listContainer}>
             <EditableTitle list={list} />
             <TodoList
                 todos={todos}
@@ -141,6 +218,7 @@ function addList() {
             tx.lists[id()].update({
                 name: newListName,
                 createdAt: Date.now(),
+                order: Date.now(), // Use timestamp as initial order
             })
         );
     }
@@ -465,6 +543,7 @@ type TodoList = {
     id: string;
     name: string;
     createdAt: number;
+    order?: number;
 };
 
 // Styles
@@ -529,7 +608,6 @@ const styles: Record<string, React.CSSProperties> = {
         flexGrow: 1,
         overflow: "hidden",
         textOverflow: "ellipsis",
-        whiteSpace: "nowrap",
         cursor: "text",
         minHeight: "1em",
         outline: "none",
