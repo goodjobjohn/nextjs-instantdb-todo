@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useMemo } from "react";
 import { init, tx, id } from "@instantdb/react";
 import {
     dropTargetForElements,
@@ -36,7 +36,6 @@ function App() {
 
     return (
         <div className="container" style={styles.container}>
-            <div style={styles.header}>freeflow</div>
             <button onClick={addList} style={styles.addListButton}>
                 Add List
             </button>
@@ -63,9 +62,10 @@ function TodoListComponent({ list, todos }: { list: TodoList; todos: Todo[] }) {
         forceUpdate({});
     };
 
-    const onDragEnd = (source: Todo, destination: Todo | TodoList) => {
+    const onDragEnd = (source: Todo, destination: Todo | TodoList, destinationIndex: number) => {
         console.log('Source:', JSON.stringify(source, null, 2));
         console.log('Destination:', JSON.stringify(destination, null, 2));
+        console.log('Destination Index:', destinationIndex);
 
         if (!source || !source.id) {
             console.error('Invalid source object:', source);
@@ -75,18 +75,37 @@ function TodoListComponent({ list, todos }: { list: TodoList; todos: Todo[] }) {
         let transactionSteps;
         if ('name' in destination) {
             // Dropping onto a different list
-            const maxOrder = Math.max(...todos.filter(t => t.listId === destination.id).map(t => t.order || 0), 0);
+            const destinationTodos = todos.filter(t => t.listId === destination.id).sort((a, b) => (a.order || 0) - (b.order || 0));
+            let newOrder;
+            if (destinationIndex === 0) {
+                newOrder = ((destinationTodos[0]?.order || 0) - 1);
+            } else if (destinationIndex >= destinationTodos.length) {
+                newOrder = ((destinationTodos[destinationTodos.length - 1]?.order || 0) + 1);
+            } else {
+                const prevOrder = destinationTodos[destinationIndex - 1].order || 0;
+                const nextOrder = destinationTodos[destinationIndex].order || 0;
+                newOrder = (prevOrder + nextOrder) / 2;
+            }
             transactionSteps = [
                 tx.todos[source.id].update({ 
                     listId: destination.id,
-                    order: maxOrder + 1,
+                    order: newOrder,
                 })
             ];
         } else {
             // Reordering within the same list
-            const sourceIndex = todos.findIndex(t => t.id === source.id);
-            const destIndex = todos.findIndex(t => t.id === destination.id);
-            const newOrder = calculateNewOrder(todos, sourceIndex, destIndex);
+            const sortedTodos = todos.filter(t => t.listId === source.listId).sort((a, b) => (a.order || 0) - (b.order || 0));
+            let newOrder;
+            if (destinationIndex === 0) {
+                newOrder = ((sortedTodos[0]?.order || 0) - 1);
+            } else if (destinationIndex >= sortedTodos.length) {
+                newOrder = ((sortedTodos[sortedTodos.length - 1]?.order || 0) + 1);
+            } else {
+                const prevOrder = sortedTodos[destinationIndex - 1].order || 0;
+                const nextOrder = sortedTodos[destinationIndex].order || 0;
+                newOrder = (prevOrder + nextOrder) / 2;
+            }
+            
             transactionSteps = [
                 tx.todos[source.id].update({ order: newOrder })
             ];
@@ -103,7 +122,7 @@ function TodoListComponent({ list, todos }: { list: TodoList; todos: Todo[] }) {
 
     return (
         <div className="listContainer" style={styles.listContainer}>
-            <h3 style={styles.listTitle}>{list.name}</h3>
+            <EditableTitle list={list} />
             <TodoList
                 todos={todos}
                 listId={list.id}
@@ -180,8 +199,8 @@ function toggleAll(todos: Todo[]) {
 
 // Components
 // ----------
-function TodoList({ todos, listId, onDragStart, onDragEnd }: { todos: Todo[]; listId: string; onDragStart: () => void; onDragEnd: (source: Todo, destination: Todo | TodoList) => void }) {
-    const sortedTodos = [...todos].sort((a, b) => (a.order || 0) - (b.order || 0));
+function TodoList({ todos, listId, onDragStart, onDragEnd }: { todos: Todo[]; listId: string; onDragStart: () => void; onDragEnd: (source: Todo, destination: Todo | TodoList, destinationIndex: number) => void }) {
+    const sortedTodos = useMemo(() => [...todos].sort((a, b) => (a.order || 0) - (b.order || 0)), [todos]);
     const listRef = useRef<HTMLDivElement>(null);
     const [dropIndicatorIndex, setDropIndicatorIndex] = useState<number | null>(null);
 
@@ -193,17 +212,9 @@ function TodoList({ todos, listId, onDragStart, onDragEnd }: { todos: Todo[]; li
                 element: listRef.current,
                 getData: () => ({ id: listId, name: 'List' }),
                 canDrop: (args) => {
-                    console.log('canDrop args:', JSON.stringify({
-                        sourceData: args.source.data,
-                        targetId: listId
-                    }, null, 2));
-                    // Allow dropping from any list, including the same one
-                    return args.source.data && args.source.data.listId;
+                    return args.source.data && 'listId' in args.source.data;
                 },
                 onDrag: (args) => {
-                    console.log('onDrag args:', JSON.stringify({
-                        sourceData: args.source.data,
-                    }, null, 2));
                     if (args.source.element) {
                         args.source.element.style.opacity = '0.5';
                     }
@@ -212,36 +223,35 @@ function TodoList({ todos, listId, onDragStart, onDragEnd }: { todos: Todo[]; li
                     if (listRef.current) {
                         const listRect = listRef.current.getBoundingClientRect();
                         const y = args.location.current.input.clientY;
-                        const index = Math.floor((y - listRect.top) / 40); // Assuming each item is 40px high
-                        setDropIndicatorIndex(Math.max(0, Math.min(index, sortedTodos.length)));
+                        const todoItems = Array.from(listRef.current.children).filter(child => child.classList.contains('todo-item'));
+                        let index = todoItems.findIndex(item => {
+                            const rect = item.getBoundingClientRect();
+                            return y < rect.top + rect.height / 2;
+                        });
+                        if (index === -1) index = todoItems.length;
+                        setDropIndicatorIndex(index);
                     }
                 },
                 onDragLeave: (args) => {
-                    console.log('onDragLeave args:', JSON.stringify({
-                        sourceData: args.source.data,
-                    }, null, 2));
                     if (args.source.element) {
                         args.source.element.style.opacity = '1';
                     }
                     setDropIndicatorIndex(null);
                 },
                 onDrop: (args) => {
-                    console.log('onDrop args:', JSON.stringify({
-                        sourceData: args.source.data,
-                    }, null, 2));
                     if (args.source.element) {
                         args.source.element.style.opacity = '1';
                     }
                     if (args.source.data) {
                         const sourceTodo = args.source.data as Todo;
+                        const destinationIndex = dropIndicatorIndex !== null ? dropIndicatorIndex : sortedTodos.length;
                         if (sourceTodo.listId !== listId) {
                             // Dropping onto a different list
-                            onDragEnd(sourceTodo, { id: listId, name: 'List', createdAt: Date.now() });
+                            onDragEnd(sourceTodo, { id: listId, name: 'List', createdAt: Date.now() }, destinationIndex);
                         } else {
                             // Reordering within the same list
-                            const destinationIndex = dropIndicatorIndex !== null ? dropIndicatorIndex : sortedTodos.length;
-                            const destinationTodo = sortedTodos[destinationIndex] || { id: 'end', listId, order: Number.MAX_SAFE_INTEGER };
-                            onDragEnd(sourceTodo, destinationTodo);
+                            const destinationTodo = sortedTodos[destinationIndex] || { id: 'end', listId, order: Number.MAX_SAFE_INTEGER, text: '', done: false, createdAt: Date.now() };
+                            onDragEnd(sourceTodo, destinationTodo, destinationIndex);
                         }
                     } else {
                         console.error('Drop event occurred but source data is missing');
@@ -250,16 +260,8 @@ function TodoList({ todos, listId, onDragStart, onDragEnd }: { todos: Todo[]; li
                 },
             }),
             monitorForElements({
-                onDragStart: (args) => {
-                    console.log('onDragStart args:', JSON.stringify({
-                        sourceData: args.source.data,
-                    }, null, 2));
-                    onDragStart();
-                },
-                onDrop: (args) => {
-                    console.log('monitor onDrop args:', JSON.stringify({
-                        sourceData: args.source.data,
-                    }, null, 2));
+                onDragStart,
+                onDrop: () => {
                     onDragStart();
                     setDropIndicatorIndex(null);
                 },
@@ -267,7 +269,7 @@ function TodoList({ todos, listId, onDragStart, onDragEnd }: { todos: Todo[]; li
         );
 
         return cleanup;
-    }, [listId, onDragEnd, onDragStart, sortedTodos]);
+    }, [listId, onDragEnd, onDragStart, sortedTodos, dropIndicatorIndex]);
 
     return (
         <div ref={listRef} style={styles.todoList}>
@@ -282,7 +284,7 @@ function TodoList({ todos, listId, onDragStart, onDragEnd }: { todos: Todo[]; li
     );
 }
 
-function TodoItem({ todo, listId, todos, onDragEnd }: { todo: Todo; listId: string; todos: Todo[]; onDragEnd: (source: Todo, destination: Todo | TodoList) => void }) {
+function TodoItem({ todo, listId, todos, onDragEnd }: { todo: Todo; listId: string; todos: Todo[]; onDragEnd: (source: Todo, destination: Todo | TodoList, destinationIndex: number) => void }) {
     const [text, setText] = useState(todo.text);
     const contentEditableRef = useRef<HTMLDivElement>(null);
     const itemRef = useRef<HTMLDivElement>(null);
@@ -303,11 +305,10 @@ function TodoItem({ todo, listId, todos, onDragEnd }: { todo: Todo; listId: stri
                 element: itemRef.current,
                 getData: () => todo,
                 onDrop: (args) => {
-                    console.log('TodoItem onDrop args:', JSON.stringify({
-                        sourceData: args.source.data,
-                    }, null, 2));
                     if (args.source.data) {
-                        onDragEnd(args.source.data as Todo, todo);
+                        const sourceTodo = args.source.data as Todo;
+                        const destinationIndex = todos.findIndex(t => t.id === todo.id);
+                        onDragEnd(sourceTodo, todo, destinationIndex);
                     } else {
                         console.error('Drop event occurred in TodoItem but source data is missing');
                     }
@@ -316,7 +317,7 @@ function TodoItem({ todo, listId, todos, onDragEnd }: { todo: Todo; listId: stri
         );
 
         return cleanup;
-    }, [todo, onDragEnd]);
+    }, [todo, onDragEnd, todos]);
 
     const handleBlur = () => {
         if (text.trim() === "") {
@@ -351,7 +352,7 @@ function TodoItem({ todo, listId, todos, onDragEnd }: { todo: Todo; listId: stri
     };
 
     return (
-        <div ref={itemRef} className="item" style={styles.todo}>
+        <div ref={itemRef} className="item todo-item" style={styles.todo}>
             <input
                 type="checkbox"
                 style={styles.checkbox}
@@ -509,6 +510,8 @@ const styles: Record<string, React.CSSProperties> = {
         padding: "10px",
         margin: "0",
         borderBottom: "var(--border-style)",
+        outline: "none", // Remove the focus outline
+        minHeight: "1em", // Ensure a minimum height
     },
     todoList: {
         flex: 1,
@@ -580,5 +583,55 @@ const styles: Record<string, React.CSSProperties> = {
         transition: 'all 0.2s ease',
     },
 };
+
+// Add this new function near the other data manipulation functions
+function updateListName(list: TodoList, newName: string) {
+    db.transact(tx.lists[list.id].update({ 
+        name: newName,
+    }));
+}
+
+// Add this new component
+function EditableTitle({ list }: { list: TodoList }) {
+    const [text, setText] = useState(list.name);
+    const contentEditableRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        setText(list.name);
+    }, [list.name]);
+
+    const handleBlur = () => {
+        if (text.trim() === "") {
+            setText(list.name); // Reset to original name if empty
+        } else if (text !== list.name) {
+            updateListName(list, text);
+        }
+    };
+
+    const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+        if (e.key === "Enter") {
+            e.preventDefault();
+            contentEditableRef.current?.blur();
+        }
+    };
+
+    const handleInput = (e: React.FormEvent<HTMLDivElement>) => {
+        setText(e.currentTarget.textContent || "");
+    };
+
+    return (
+        <div
+            ref={contentEditableRef}
+            contentEditable
+            suppressContentEditableWarning
+            style={styles.listTitle}
+            onInput={handleInput}
+            onBlur={handleBlur}
+            onKeyDown={handleKeyDown}
+        >
+            {text}
+        </div>
+    );
+}
 
 export default App;
