@@ -569,10 +569,10 @@ const styles: Record<string, React.CSSProperties> = {
         borderRadius: "20px",
         border: "var(--border-style)",
         width: "100%",
-        padding: "20px 0",
+        padding: "20px",
     },
     listContainer: {
-        borderRadius: "15px",
+        borderRadius: "8px",
         border: "var(--border-style)",
         overflow: "hidden",
         minWidth: "300px",
